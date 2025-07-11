@@ -1,0 +1,178 @@
+{
+  "name": "Gmail Workflow Generico",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -460,
+        20
+      ],
+      "id": "generic-schedule-trigger-id",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "operation": "extractHtmlContent",
+        "extractionValues": {
+          "values": [
+            {
+              "key": "link",
+              "cssSelector": "a.olx-adcard__link",
+              "returnValue": "attribute",
+              "attribute": "href",
+              "returnArray": true
+            },
+            {
+              "key": "horario",
+              "cssSelector": "p.olx-adcard__date",
+              "returnArray": true
+            },
+            {
+              "key": "titulo",
+              "cssSelector": "h2",
+              "returnArray": true
+            },
+            {
+              "key": "preco",
+              "cssSelector": ".olx-adcard__price",
+              "returnArray": true
+            },
+            {
+              "key": "tipo_vendedor",
+              "cssSelector": "[aria-label*=\"proprietário\"]",
+              "returnArray": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.html",
+      "typeVersion": 1.2,
+      "position": [
+        60,
+        20
+      ],
+      "id": "generic-html-node-id",
+      "name": "HTML"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Código JavaScript para processamento e filtragem de dados.\n// Este script recebe dados de anúncios, filtra por tipo de vendedor e data (últimas 24 horas),\n// e prepara um corpo de e-mail HTML com os anúncios encontrados.\n\nconst item = $input.item;\nconst links = item.json.link || [];\nconst titulos = item.json.titulo || [];\nconst precos = item.json.preco || [];\nconst horarios = item.json.horario || [];\nconst tiposVendedor = item.json.tipo_vendedor || []; \n\nconst anunciosFiltrados = [];\nconst meses = {\n  'Jan': 0, 'Fev': 1, 'Mar': 2, 'Abr': 3, 'Mai': 4, 'Jun': 5,\n  'Jul': 6, 'Ago': 7, 'Set': 8, 'Out': 9, 'Nov': 10, 'Dez': 11\n};\n\nfor (let i = 0; i < links.length; i++) {\n  try {\n    if (tiposVendedor[i] !== 'Direto com o proprietário') {\n      continue;\n    }\n\n    const anuncioAtual = {\n      titulo: titulos[i] || 'Título não encontrado',\n      preco: precos[i] || 'Preço não informado',\n      link: links[i],\n      horario: horarios[i]\n    };\n\n    const textoData = anuncioAtual.horario;\n    if (typeof textoData !== 'string' || !textoData) {\n      continue;\n    }\n\n    const agora = new Date(); \n    let dataAnuncio = new Date(); \n\n    if (textoData.includes('Ontem')) {\n      dataAnuncio.setDate(agora.getDate() - 1);\n    } else if (!textoData.includes('Hoje')) {\n      const partes = textoData.split(' ');\n      const dia = parseInt(partes[0], 10);\n      const mes = meses[partes[1]];\n      if (!isNaN(dia) && mes !== undefined) {\n        dataAnuncio.setMonth(mes, dia);\n        if (dataAnuncio > agora) {\n          dataAnuncio.setFullYear(agora.getFullYear() - 1);\n        }\n      } else {\n        continue;\n      }\n    }\n\n    const horaMinutoMatch = textoData.match(/(\\d{2}):(\\d{2})/);\n    if (horaMinutoMatch) {\n      dataAnuncio.setHours(parseInt(horaMinutoMatch[1], 10));\n      dataAnuncio.setMinutes(parseInt(horaMinutoMatch[2], 10));\n      dataAnuncio.setSeconds(0);\n      dataAnuncio.setMilliseconds(0);\n    } else {\n      continue; \n    }\n\n    const dataCorte = new Date();\n    dataCorte.setHours(dataCorte.getHours() - 24);\n\n    if (dataAnuncio >= dataCorte) {\n      anunciosFiltrados.push(anuncioAtual);\n    }\n\n  } catch (error) {\n    continue;\n  }\n}\n\nif (anunciosFiltrados.length === 0) {\n  return [{\n    json: {\n      status: \"Nenhum anúncio novo encontrado que atenda aos critérios.\"\n    }\n  }];\n}\n\nconst estiloCss = `\n<style>\nbody { font-family: Arial, sans-serif; line-height: 1.6; color: #333; background-color: #f4f4f4; padding: 20px; }\n.container { width: 90%; max-width: 650px; margin: 20px auto; border: 1px solid #ddd; border-radius: 8px; padding: 25px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); background-color: #ffffff; }\nh1 { color: #2c3e50; font-size: 24px; border-bottom: 2px solid #f28000; padding-bottom: 10px; }\n.anuncio { border-bottom: 1px solid #eee; padding-bottom: 15px; margin-bottom: 15px; }\n.anuncio:last-child { border-bottom: none; }\nh3 { margin-bottom: 5px; font-size: 18px;}\na { color: #3498db; text-decoration: none; font-weight: bold; }\na:hover { text-decoration: underline; }\n.preco { font-weight: bold; color: #27ae60; font-size: 16px; }\n.horario { color: #7f8c8d; font-size: 12px; }\n</style>\n`;\n\nconst listaDeAnunciosHtml = anunciosFiltrados.map(anuncio => `\n<div class=\"anuncio\">\n<h3><a href=\"${anuncio.link}\" target=\"_blank\">${anuncio.titulo}</a></h3>\n<p class=\"preco\">Valor: ${anuncio.preco}</p>\n<p class=\"horario\">Publicado: ${anuncio.horario}</p>\n</div>\n`).join('');\n\nconst corpoDoEmail = `\n<html>\n<head>${estiloCss}</head>\n<body>\n<div class=\"container\">\n<h1>📢 Alerta de ${anunciosFiltrados.length} Novos Anúncios | OLX Piracicaba</h1>\n${listaDeAnunciosHtml}\n</div>\n</body>\n</html>\n`;\n\nreturn [{\n  json: {\n    assunto_email: `📢 ${anunciosFiltrados.length} Novos Anúncios Encontrados na OLX (Últimas 24 horas)`,\n    corpo_email_html: corpoDoEmail\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        20
+      ],
+      "id": "generic-code-node-id",
+      "name": "Code",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "url": "http://api.scraperapi.com?api_key=YOUR_SCRAPERAPI_KEY&render=true&country_code=br&url=[URL_OLX_CIDADE_ESCOLHIDA]",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -240,
+        20
+      ],
+      "id": "generic-http-request-id",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "sendTo": "seu_email_aqui@example.com",
+        "subject": "={{ $json.assunto_email }}",
+        "message": "={{ $json.corpo_email_html }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        420,
+        20
+      ],
+      "id": "generic-send-message-id",
+      "name": "Send a message",
+      "webhookId": "generic-webhook-id",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "generic-gmail-oauth-id",
+          "name": "Gmail account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTML": {
+      "main": [
+        [
+          {
+            "node": "Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "generic-version-id",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "generic-instance-id"
+  },
+  "id": "generic-workflow-id",
+  "tags": []
+}
